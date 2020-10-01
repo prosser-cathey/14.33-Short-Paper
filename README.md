@@ -17,6 +17,8 @@ cases.csv - Daily new coronavirus cases by county
 
 StateTax.csv - Data on state tax revenues
 
+Masks (Responses) .csv - Survey data on if others' mask wearing makes people feel more comfortable leaving their house.
+
 14.33 Short Paper.R - My R script that takes the above csv files and runs the analysis. 
 
 All csv files are almost the same as they can be found at the original sources. The only changes were splitting columns of dates into multiple columns and combining information from multiple pages of the same website for StateTax.csv.
