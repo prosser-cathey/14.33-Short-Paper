@@ -19,5 +19,5 @@ StateTax.csv - Data on state tax revenues
 
 14.33 Short Paper.R - My R script that takes the above csv files and runs the analysis. 
 
-All csv files are almost the same as they can be found at the original sources. The only changes were splitting columns of dates into multiple columns and combineing information from multiple pages of the same website for StateTax.csv.
+All csv files are almost the same as they can be found at the original sources. The only changes were splitting columns of dates into multiple columns and combining information from multiple pages of the same website for StateTax.csv.
 
