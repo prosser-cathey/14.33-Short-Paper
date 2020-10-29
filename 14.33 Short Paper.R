@@ -8,6 +8,9 @@ rural_urban <- read.csv("ruralurban.csv")
 presvotes <- read.csv("presvotes.csv")
 cases <- read.csv("cases.csv")
 state_tax <- read.csv("StateTax.csv")
+interventions <- read.csv("county_interventions.csv")
+cities <- read.csv("Cityspending.csv")
+cityid <- read.csv("CityID.csv")
 
 #Clean & Format Data
 # Drop columns I don't use
@@ -26,7 +29,7 @@ consumer_spending$spend_all <- as.numeric(as.character(consumer_spending$spend_a
 # Merging consumer spending and mask policy datasets
 csxmp <- merge(consumer_spending,mask_policy,by="CountyFIPS")
 # Creating Days Since Mandate Variable
-csxmp$DaysSinceMandate <- csxmp$DaysThisYear - csxmp$EariliestPolicyDaysThisYear\
+csxmp$DaysSinceMandate <- csxmp$DaysThisYear - csxmp$EariliestPolicyDaysThisYear
 # Creating Dummy Variable for Pre/Post Treatment
 csxmp$PostDummy <- csxmp$DaysSinceMandate>0
 csxmp$PostDummy [csxmp$PostDummy == "true"] <- 1
@@ -60,10 +63,49 @@ mean(aggregate(csxmp$spend_all, list(csxmp$month), median)$x)
 
 # 2-way fixed effects
 library("lfe")
-est <- felm(spend_all ~ PostDummy + cases| CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc)
+# long time frame
+est <- felm(spend_all ~ PostDummy + cases| CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
 summary(est)
+# short time frame
+estmonth <- felm(spend_all ~ PostDummy + cases| CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<32 & csxmpxc$DaysSinceMandate>-32,])
+summary(estmonth)
+# super short time frame
+estweek <- felm(spend_all ~ PostDummy + cases| CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<8 & csxmpxc$DaysSinceMandate>-8,])
+summary(estweek)
 
-# Checking Homogenous Time Effects Assumption
+
+# Event-study
+csxmpxc$DaysSinceMandateFactor <- as.factor(csxmpxc$DaysSinceMandate)
+relevel
+warpbreaks$tension <- relevel(warpbreaks$tension, ref = "M")
+csxmpxc$DaysSinceMandateFactor <- relevel(csxmpxc$DaysSinceMandateFactor, ref = "-1")
+library("lmtest")
+library("sandwich")
+lout <- lm(spend_all ~  CountyFIPS + cases + DaysSinceMandateFactor, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+summary(lout)
+lout <- as.data.frame(unclass(coeftest(lout,vcov=vcovHC(lout,type="HC0",cluster="CountyFIPS"))))
+lout$day <- as.numeric(c("NA", "NA", "NA", -50:-2, 0:125))
+lout$ci <- 1.96*lout$`Std. Error`
+library("ggplot2")
+pd <- position_dodge(0.1)
+ggplot(lout[is.na(lout$day)==FALSE,], aes(y=Estimate, x=day)) + 
+  geom_errorbar(aes(ymin=Estimate-ci, ymax=Estimate+ci), width=.01, position=pd, colour = "blue") +
+  geom_point(size=1) + 
+  geom_vline(xintercept = -1) +
+  geom_segment(aes(x=-50,xend=-1,y=median(lout[lout$day<0 & is.na(lout$day)==FALSE,]$Estimate),yend=median(lout[lout$day<0 & is.na(lout$day)==FALSE,]$Estimate)), color = "red") +
+  geom_segment(aes(x=-1,xend=125,y=median(lout[lout$day>-1 & is.na(lout$day)==FALSE,]$Estimate),yend=median(lout[lout$day>-1 & is.na(lout$day)==FALSE,]$Estimate)), color = "red") +
+  xlab("Days Since Mandate") +
+  ggtitle(c("Mask Mandate and Consumer \nSpending: Event Study")) +
+  theme_classic()
+
+# Robustness Check
+felm <- felm(spend_all ~ PostDummy | 0 | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+felm2 <- felm(spend_all ~ PostDummy | CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+felm3 <- felm(spend_all ~ PostDummy + cases | CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+felm4 <- felm(spend_all ~ PostDummy + cases | CountyFIPS + State_Code + ruralurban + per_dem| 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+stargazer(felm,felm2,felm3,felm4, float.env = "sidewaystable")
+
+# Checking Homogeneous Time Effects Assumption
 # 2-way fixed effects (same regression as before except restricted to a given month)
 test3 <- felm(spend_all ~  PostDummy + cases| CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$month.x==3,])
 test4 <- felm(spend_all ~  PostDummy + cases| CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$month.x==4,])
@@ -96,6 +138,26 @@ x <- c( "March", "April", "May", "June", "July", "August")
 rownames(testsummary) <- (x)
 colnames(testsummary) <- c("Estimate", "Standard Error", "Signifigance")
 stargazer(testsummary[,c(1:2)], notes = c("We repeat our analysis after subsetting the data by state.", "Some states were excluded due to scarcity of data."))
+
+# Checking the time distribution of mask mandates
+library("ggplot2")
+library("ggpubr")
+library("dplyr")
+subset <- csxmpxc[,c("CountyFIPS","EariliestPolicyDaysThisYear")]
+subset <- subset[is.na(subset$EariliestPolicyDaysThisYear)==FALSE,]
+subset <- unique(subset)
+ggplot(subset, aes(x=EariliestPolicyDaysThisYear)) + 
+  stat_ecdf(geom = "step") + 
+  theme_classic() +
+  xlab("Days This Year") +
+  ylab("Density") +
+  ggtitle("Cumulative Density Fuction of \nMask Mandate Implementation")
+ggplot(subset, aes(x=EariliestPolicyDaysThisYear)) + 
+  geom_histogram(binwidth = 1) + 
+  theme_classic() +
+  xlab("Days This Year") +
+  ylab("Density") +
+  ggtitle("Cumulative Density Fuction of \nMask Mandate Implementation")
 
 
 # Checking Homogenous Group Effects Assumption
@@ -311,32 +373,32 @@ estur2 <- felm(spend_all ~ PostDummy + cases | CountyFIPS + State_Code | 0 | Cou
 estur1 <- felm(spend_all ~ PostDummy + cases | CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$ruralurban==1,])
 # Matrix with results
 estursummary <- matrix(c(estur1$coefficients[1,1], 
-                       estur1$cse[1], 
-                       estur1$cpval[1],
-                       estur2$coefficients[1,1], 
-                       estur2$cse[1], 
-                       estur2$cpval[1],
-                       estur3$coefficients[1,1], 
-                       estur3$cse[1], 
-                       estur3$cpval[1],
-                       estur4$coefficients[1,1], 
-                       estur4$cse[1], 
-                       estur4$cpval[1],
-                       estur5$coefficients[1,1], 
-                       estur5$cse[1], 
-                       estur5$cpval[1],
-                       estur6$coefficients[1,1], 
-                       estur6$cse[1], 
-                       estur6$cpval[1],
-                       estur7$coefficients[1,1], 
-                       estur7$cse[1], 
-                       estur7$cpval[1],
-                       estur8$coefficients[1,1], 
-                       estur8$cse[1], 
-                       estur8$cpval[1],
-                       estur9$coefficients[1,1], 
-                       estur9$cse[1],
-                       estur9$cpval[1]), ncol = 3, byrow = TRUE)
+                         estur1$cse[1], 
+                         estur1$cpval[1],
+                         estur2$coefficients[1,1], 
+                         estur2$cse[1], 
+                         estur2$cpval[1],
+                         estur3$coefficients[1,1], 
+                         estur3$cse[1], 
+                         estur3$cpval[1],
+                         estur4$coefficients[1,1], 
+                         estur4$cse[1], 
+                         estur4$cpval[1],
+                         estur5$coefficients[1,1], 
+                         estur5$cse[1], 
+                         estur5$cpval[1],
+                         estur6$coefficients[1,1], 
+                         estur6$cse[1], 
+                         estur6$cpval[1],
+                         estur7$coefficients[1,1], 
+                         estur7$cse[1], 
+                         estur7$cpval[1],
+                         estur8$coefficients[1,1], 
+                         estur8$cse[1], 
+                         estur8$cpval[1],
+                         estur9$coefficients[1,1], 
+                         estur9$cse[1],
+                         estur9$cpval[1]), ncol = 3, byrow = TRUE)
 # Exporting to Latex code
 rural_urban <- as.data.frame(rural_urban)
 rural_urban <- rural_urban[order(rural_urban$RUCC_2013),]
@@ -347,7 +409,7 @@ rownames(estursummary) <- as.vector(x)
 stargazer(as.matrix(estursummary[,c(1:2)]), notes = c("We repeat our analysis after subsetting the data by state.", "Some states were excluded due to scarcity of data."))
 
 
-# 2-way fixed effects (same regression as before except restricted to a given vote county)
+# 2-way fixed effects (same regression as before except restricted to a given county's vote percentage)
 estpol1 <- felm(spend_all ~ PostDummy + cases | CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$per_dem>=.5,])
 estpol2 <- felm(spend_all ~ PostDummy + cases | CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$per_dem>=.75,])
 estpol3 <- felm(spend_all ~ PostDummy + cases | CountyFIPS + State_Code | 0 | CountyFIPS, csxmpxc[csxmpxc$per_gop>=.5,])
@@ -373,6 +435,71 @@ rownames(estpolsummry) <- as.vector(x)
 stargazer(as.matrix(estpolsummry[,c(1:2)]), notes = c("We repeat our analysis after subsetting the data by 2016 Presidential election votes"))
 
 # Reopenings Don't Matter Visualization
+# Counties
+# Recoding reference frame of dates from days since 12/31/0000 to days since 12/31/2019
+# 737426 is the number of days from 01/01/0001 until 01/01/2020
+interventions[,c(4:16)] <- interventions[,c(4:16)] -737426
+# Renaming column
+interventions$CountyFIPS <- interventions$FIPS
+# Adding in mask mandate dates
+interventions <- merge(interventions, subset, by = "CountyFIPS")
+# Coding the difference in dates between each policy and mask mandates
+interventions$DiffSAH_ <- interventions$EariliestPolicyDaysThisYear - interventions$stay.at.home.rollback
+interventions$Diff500G_ <- interventions$EariliestPolicyDaysThisYear - interventions$X.500.gatherings.rollback
+interventions$Diff50G_ <- interventions$EariliestPolicyDaysThisYear - interventions$X.50.gatherings.rollback
+interventions$DiffRest_ <- interventions$EariliestPolicyDaysThisYear - interventions$restaurant.dine.in.rollback
+interventions$DiffGym_ <- interventions$EariliestPolicyDaysThisYear - interventions$entertainment.gym.rollback
+# Adding an index so that ggplot works
+interventions$index <- c(1:1245)
+# Making Graphs
+ggplot(interventions, aes(y=DiffSAH_,x=index)) + 
+  geom_point() +
+  theme_classic() +
+  xlab("County") +
+  ylab("Difference Between Stay at Home Order End and \nMask Mandate Implementation (Days)") +
+  ggtitle("Stay at Home Order End and \nMask Mandate Implementation") +
+  geom_hline(yintercept = 0) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+ggplot(interventions, aes(y=Diff500G_,x=index)) + 
+  geom_point() +
+  theme_classic() +
+  xlab("County") +
+  ylab("Difference Between 500 Person Gathering Ban \nEnd and Mask Mandate Implementation (Days)") +
+  ggtitle("500 Person Gathering Ban End and \nMask Mandate Implementation") +
+  geom_hline(yintercept = 0) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+ggplot(interventions, aes(y=Diff50G_,x=index)) + 
+  geom_point() +
+  theme_classic() +
+  xlab("County") +
+  ylab("Difference Between 50 Person Gathering Ban \nEnd and Mask Mandate Implementation (Days)") +
+  ggtitle("50 Person Gathering Ban End and \nMask Mandate Implementation") +
+  geom_hline(yintercept = 0) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+ggplot(interventions, aes(y=DiffRest_,x=index)) + 
+  geom_point() +
+  theme_classic() +
+  xlab("County") +
+  ylab("Difference Between Restaurant Reopening and \nMask Mandate Implementation (Days)") +
+  ggtitle("Restaurant Reopening and \nMask Mandate Implementation") +
+  geom_hline(yintercept = 0) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+ggplot(interventions, aes(y=DiffGym_,x=index)) + 
+  geom_point() +
+  theme_classic() +
+  xlab("County") +
+  ylab("Difference Between Gym & Enterntainment \nReopening and Mask Mandate Implementation (Days)") +
+  ggtitle("Gym & Enterntainment Reopening \nand Mask Mandate Implementation") +
+  geom_hline(yintercept = 0) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+
+# States (not using)
 # Getting each states Reopen Date
 class_data_medians <- aggregate(class_data$ReopenDate, list(class_data$state), median)
 # Combing mask policy date and reopening date into one dataset
@@ -410,6 +537,32 @@ stargazer(as.matrix(state_tax), notes = c("We calculate the maximum expected per
 
 # Other Stuff I tried but didn't include in the paper and don't want to delete in case it's useful later:
 # Didn't think I needed to comment this because it's not part of the paper. 
+
+# Subset by sector
+# merge id & spending data
+cities <- merge(cities,cityid, by ="cityid")
+## Download the file
+temp <- tempfile()
+download.file("http://download.geonames.org/export/zip/US.zip",temp)
+con <- unz(temp, "US.txt")
+US <- read.delim(con, header=FALSE)
+unlink(temp)
+## Find state and county
+colnames(US)[c(3,5,6)] <- c("city","state","county")
+US$city <- tolower(US$city)
+myCityNames <- tolower(cityid$cityname)
+myCities <- US[US$city %in% myCityNames, ]
+myCities <- myCities[c("city","state","county")]
+myCities <- myCities[!duplicated(myCities),]
+myCities <- myCities[order(myCities$city, myCities$state, decreasing = TRUE), ]
+myPlaces <- data.frame(city = myCityNames, state = cityid$stateabbrev)
+cities$city <- cities$cityname
+library("stringr")
+library("usmap")
+thing <- merge(myCities, myPlaces, by = c("city", "state"))
+thing$city <- str_to_title(thing$city)
+city <- merge(cities,thing, by="city")
+city$CountyFIPS <- fips(city$stateabbrev, county = city$county)
 
 # Diff-in-diff did
 library(did)
