@@ -96,13 +96,13 @@ csxmpxc$DummyFed[is.na(csxmpxc$DummyFed)] <- 0
 # Fixed effects
 library("lfe")
 # long time frame
-est <- felm(spend_all ~ PostDummy + cases + SAHDummy + RestDummy + deaths + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+est <- felm(spend_all ~ PostDummy + cases + deaths + SAHDummy + RestDummy + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
 summary(est)
-# short time frame
-estmonth <- felm(spend_all ~ PostDummy + cases + SAHDummy + RestDummy + deaths + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<32 & csxmpxc$DaysSinceMandate>-32,])
+# month time frame
+estmonth <- felm(spend_all ~ PostDummy + cases + deaths + SAHDummy + RestDummy + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<32 & csxmpxc$DaysSinceMandate>-32,])
 summary(estmonth)
-# super short time frame
-estweek <- felm(spend_all ~ PostDummy + cases + SAHDummy + RestDummy + deaths + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<8 & csxmpxc$DaysSinceMandate>-8,])
+# week time frame
+estweek <- felm(spend_all ~ PostDummy + cases + deaths + SAHDummy + RestDummy + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<8 & csxmpxc$DaysSinceMandate>-8,])
 summary(estweek)
 
 
@@ -111,17 +111,19 @@ csxmpxc$DaysSinceMandateFactor <- as.factor(csxmpxc$DaysSinceMandate)
 relevel
 warpbreaks$tension <- relevel(warpbreaks$tension, ref = "M")
 csxmpxc$DaysSinceMandateFactor <- relevel(csxmpxc$DaysSinceMandateFactor, ref = "-1")
+csxmpxc$CountyFactor <- as.factor(csxmpxc$CountyFIPS)
 library("lmtest")
 library("sandwich")
-lout <- lm(spend_all ~  CountyFIPS + cases + SAHDummy + RestDummy + deaths + GymDummy + Dummy50 + Dummy500 + DummyTravel + DaysSinceMandateFactor, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+lout <- lm(spend_all ~  CountyFIPS + cases + SAHDummy + RestDummy + deaths + GymDummy + Dummy50 + Dummy500 + DummyTravel + DaysSinceMandateFactor + CountyFactor, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
 summary(lout)
 lout <- as.data.frame(unclass(coeftest(lout,vcov=vcovHC(lout,type="HC0",cluster="CountyFIPS"))))
+lout <- lout[1:185,]
 lout$day <- as.numeric(c("NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA", -50:-2, 0:125))
 lout$ci <- 1.96*lout$`Std. Error`
 library("ggplot2")
 pd <- position_dodge(0.1)
 ggplot(lout[is.na(lout$day)==FALSE,], aes(y=Estimate, x=day)) + 
-  geom_errorbar(aes(ymin=Estimate-ci, ymax=Estimate+ci), width=.01, position=pd, colour = "blue") +
+  geom_errorbar(aes(ymin=Estimate-ci, ymax=Estimate+ci), width=1, position=pd, colour = "blue") +
   geom_point(size=1) + 
   geom_vline(xintercept = -1) +
   geom_segment(aes(x=-50,xend=-1,y=mean(lout[lout$day<0 & is.na(lout$day)==FALSE,]$Estimate),yend=mean(lout[lout$day<0 & is.na(lout$day)==FALSE,]$Estimate)), color = "red") +
@@ -160,20 +162,23 @@ ggplot(subset, aes(x=EariliestPolicyDaysThisYear)) +
 
 # Exploring Heterogeneity across groups
 csxmpxc$ruralurbancentered <- scale(csxmpxc$ruralurban, center=TRUE, scale=FALSE)
-fout <- felm(spend_all ~ PostDummy*ruralurban + cases + SAHDummy + RestDummy + deaths + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+csxmpxc$PostDummy_x_ruralurban <- csxmpxc$PostDummy*csxmpxc$ruralurban
+fout <- felm(spend_all ~ PostDummy + PostDummy_x_ruralurban + cases + deaths + SAHDummy + RestDummy + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
 summary(fout)
 csxmpxc$per_gop <- scale(csxmpxc$per_gop, center=TRUE, scale=FALSE)
-fout2 <- felm(spend_all ~ PostDummy*per_dem + cases + SAHDummy + RestDummy + deaths + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+csxmpxc$PostDummy_x_per_dem <- csxmpxc$PostDummy*csxmpxc$per_dem
+fout2 <- felm(spend_all ~ PostDummy + PostDummy_x_per_dem + cases + deaths + SAHDummy + RestDummy + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
 summary(fout2)
+library("stargazer")
 stargazer(fout,fout2)
 
 # Exploring Heterogeneity across time
 avg <- (range(csxmpxc[is.na(csxmpxc$DaysThisYear)==FALSE & is.na(csxmpxc$spend_all)==FALSE,]$DaysThisYear)[1]+range(csxmpxc[is.na(csxmpxc$DaysThisYear)==FALSE & is.na(csxmpxc$spend_all)==FALSE,]$DaysThisYear)[2])/2
-fout <- felm(spend_all ~ PostDummy + cases + SAHDummy + RestDummy + deaths + GymDummy + Dummy50 + Dummy500| CountyFIPS  | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51 & csxmpxc$DaysThisYear<avg,])
+fout3 <- felm(spend_all ~ PostDummy + cases + deaths + SAHDummy + RestDummy + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS  | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51 & csxmpxc$DaysThisYear<avg,])
 summary(fout)
-fout2 <- felm(spend_all ~ PostDummy + cases + SAHDummy + RestDummy + deaths + GymDummy + Dummy50 + Dummy500| CountyFIPS  | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51 & csxmpxc$DaysThisYear>=avg,])
+fout4 <- felm(spend_all ~ PostDummy + cases + deaths + SAHDummy + RestDummy + GymDummy + Dummy50 + Dummy500 + DummyFed + DummyTravel| CountyFIPS  | 0 | CountyFIPS, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51 & csxmpxc$DaysThisYear>=avg,])
 summary(fout2)
-stargazer(fout,fout2)
+stargazer(fout3,fout4, dep.var.caption = "")
 
 # Reopenings Don't Matter Visualization
 # Counties
