@@ -1,5 +1,4 @@
-# 14.33-Short-Paper
-14.33 Short Paper
+# Mask Mandates and Consumer Spending
 
 Here are the contents of this repo:
 
