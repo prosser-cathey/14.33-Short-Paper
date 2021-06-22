@@ -8,8 +8,6 @@ presvotes <- read.csv("presvotes.csv")
 cases <- read.csv("cases.csv")
 state_tax <- read.csv("StateTax.csv")
 interventions <- read.csv("county_interventions.csv")
-cities <- read.csv("Cityspending.csv")
-cityid <- read.csv("CityID.csv")
 
 #Clean & Format Data
 # Drop columns I don't use
