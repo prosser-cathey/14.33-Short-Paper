@@ -3,7 +3,6 @@ setwd("/Users/prossercathey/Documents/GitHub/Mask-Mandates-and-Consumer-Spending
 class_data <- read.csv("class_data.csv")
 state_tax <- read.csv("StateTax.csv")
 rural_urban <- read.csv("ruralurban.csv")
-presvotes <- read.csv("presvotes.csv")
 mask_policy <- read.csv("mask_policy.csv")
 interventions <- read.csv("county_interventions.csv")
 consumer_spending <- read.csv("consumer_spending.csv")
@@ -21,6 +20,10 @@ library(tidyverse)
 library(dplyr)
 library(did)
 library(HonestDiD)
+library(scales)
+library(ggpubr)
+library(lmtest)
+library(sandwich)
 
 #Clean & Format Data
 # Drop columns I don't use
@@ -200,7 +203,7 @@ did_calendar <- aggte(
 rm(did)
 
 
-# Callaway & Sant'Anna DiD Regressions with Covariates
+# Callaway & Sant'Anna DiD Regressions with Covariates no fixed effects
 did_covs <- att_gt(
   yname = "spend_all",
   tname = "DaysThisYear",
@@ -460,7 +463,7 @@ did_fe <- att_gt(
   tname = "DaysThisYear",
   idname = "CountyFIPS",
   gname = "EariliestPolicyDaysThisYear",
-  xformla = ~ cases + NPI + CountyFIPS + month.x,
+  xformla = ~ cases + NPI + CountyFIPS,
   csxmpxc,
   panel = TRUE,
   allow_unbalanced_panel = FALSE,
@@ -904,7 +907,7 @@ ggplot(did_fe_df, aes(y=Estimate, x=day)) +
   geom_segment(aes(x=-100,xend=-1,y=mean(did_fe_df[did_fe_df$day<0,]$Estimate),yend=mean(did_fe_df[did_fe_df$day<0,]$Estimate)), color = "red") +
   geom_segment(aes(x=-1,xend=100,y=mean(did_fe_df[did_fe_df$day>0,]$Estimate),yend=mean(did_fe_df[did_fe_df$day>0,]$Estimate)), color = "red") +
   xlab("Days Since Mandate") +
-  ggtitle(c("Mask Mandate and Consumer Spending: Event Study")) +
+  ggtitle(c("Mask Mandate and Consumer Spending Estimates Relative to Treatment Timing")) +
   theme_classic() +
   theme(plot.title = element_text(size = 10), axis.title.x = element_text(size = 8), axis.title.y = element_text(size = 8))
 
@@ -932,31 +935,141 @@ ggplot(did_fe_df, aes(y=Estimate, x=day)) +
   theme_classic() +
   theme(plot.title = element_text(size = 10), axis.title.x = element_text(size = 8), axis.title.y = element_text(size = 8))
 
-
 # State Tax Implications
-# Cutting off emtpy datacells
-state_tax <- state_tax[c(1:51),c(1:9)]
+# for each state, hypothetical non-mm tax revenue = actual tax revenue/(1+.023%*(weighted average of counties that actually have mask mandates))
+# Renaming column
+rural_urban$CountyFIPS <- rural_urban$FIPS
+# Merging population data
+popxmp <- merge(mask_policy, rural_urban, by = "CountyFIPS")
+# Making character data numeric
+popxmp$Population_2010 <- as.numeric(gsub(",", "", popxmp$Population_2010))
+# Making earliest mask mandate date NAs into 0s
+popxmp$EariliestPolicyDaysThisYear[is.na(popxmp$EariliestPolicyDaysThisYear)] <- 0
+# Calculating percent increase per state based on county pop & mandate status
+list <- unique(popxmp$State_Code)
+popxmp$percent_increase <- 0
+for (x in list) {
+    popxmp[popxmp$State_Code == x,]$percent_increase <- (1 + did_fe_simple$overall.att*
+                                                           (sum(popxmp[popxmp$State_Code == x & popxmp$EariliestPolicyDaysThisYear >0,]$Population_2010))/sum(popxmp[popxmp$State_Code == x,]$Population_2010))
+    print(x)
+}
 # Renaming column
 state_tax$State <- state_tax$X
-# Cutting states with no sales tax
-state_tax <- state_tax[state_tax$State != "New Hampshire" & state_tax$State != "Oregon" &state_tax$State != "Delaware" &state_tax$State != "Alaska" &state_tax$State != "Montana",]
-# Calculating the expected percent change in total state taxes
-state_tax$Impact <- ((did_covs_simple$overall.att+1)*(state_tax$Sales/100)*state_tax$Total.Taxes.1+(state_tax$Property/100)*state_tax$Total.Taxes.1+ (state_tax$Selective.Sales./100)*state_tax$Total.Taxes.1 + (state_tax$Individual.Income/100)*state_tax$Total.Taxes.1 + (state_tax$Corporate.Income/100)*state_tax$Total.Taxes.1 + (state_tax$Other/100)*state_tax$Total.Taxes.1)/state_tax$Total.Taxes.1-1
-# Finding the absolute gain (adjusted down 8.8% to account for the pandemic)
-state_tax$Absolute <- (1-.088)*state_tax$Total.Taxes.1*state_tax$Impact
-# Finding the mean expected percent change
-mean(state_tax$Impact)
-# Finding the mean absolute gain
-mean(state_tax$Absolute)
+# Putting percent increase into state tax dataset
+list <- unique(state_tax$StateFIPS)
+state_tax$percent_increase <- 0
+for (x in list) {
+  state_tax[state_tax$StateFIPS == x,]$percent_increase <- median(popxmp[popxmp$State_Code == x,]$percent_increase)
+  print(x)
+}
+# Calculating the expected sales tax in the absence of mask mandates
+state_tax$hypo <- state_tax$Adjusted.Sales.Tax.Revenue/state_tax$percent_increase
+# Calculating difference between hypothetical non-mask mandate tax revenue and observed revenue
+state_tax$difference <- state_tax$Adjusted.Sales.Tax.Revenue - state_tax$hypo
+# average increase
+mean(state_tax$difference)
+# Making character data numeric
+state_tax$Total.Tax.Revenue <- as.numeric(gsub(",","",gsub("\\$", "", state_tax$Total.Tax.Revenue)))
+# Fixing total revenue to proper scale
+state_tax$Total.Tax.Revenue <- state_tax$Total.Tax.Revenue*1000
+# Average % of revenue coming from sales tax
+mean(state_tax$Adjusted.Sales.Tax.Revenue/state_tax$Total.Tax.Revenue)
+# percent of total tax rev increase
+state_tax$total_increase <- state_tax$difference/state_tax$Total.Tax.Revenue
+# state with highest relative increase
+state_tax[state_tax$total_increase == max(state_tax$total_increase),]$State
+state_tax[state_tax$total_increase == max(state_tax$total_increase),]$total_increase
+# Average relative increase
+mean(state_tax$total_increase)
+# Average absolute increase
+mean(state_tax$difference)
+# Nationwide absolute increase
+sum(state_tax$difference)
 # Loading scales
 library(scales)
+# Naming the columns
+colnames(state_tax)[2] <- c("Sales Tax Revenue")
+colnames(state_tax)[8] <- c("Est. Difference")
+colnames(state_tax)[9] <- c("Est. % Increase")
+# Dropping South Dakota because it had no mask mandates
+state_tax <- state_tax[state_tax$State != "South Dakota",]
 # Formatting as a percentage
-state_tax$Impact <- label_percent(accuracy = .01)(state_tax$Impact)
-# Naming the column
-colnames(state_tax)[11] <- c("Percentage Change")
+state_tax$`Est. % Increase` <- label_percent(accuracy = .01)(state_tax$`Est. % Increase`)
+# Formatting as $1,000,000s
+state_tax$`Sales Tax Revenue` <- state_tax$`Sales Tax Revenue`
+state_tax$`Est. Difference` <- state_tax$`Est. Difference`
+state_tax$`Sales Tax Revenue` <- dollar_format()(state_tax$`Sales Tax Revenue`)
+state_tax$`Est. Difference` <- dollar_format()(state_tax$`Est. Difference`)
 # Cutting columns I don't want to export to Latex
-state_tax <- state_tax[,c("State", "Percentage Change")]
+state_tax <- state_tax[,c("State", "Sales Tax Revenue", "Est. Difference","Est. % Increase")]
 # Creating Latex
-stargazer(as.matrix(state_tax), notes = c("We calculate the maximum expected percentage increase in tax revenue", "that can be attributed to implementing a mask mandate."), rownames = FALSE)
+stargazer(as.matrix(state_tax), rownames = FALSE)
 
+# Event study of other NPIs
+csxmpxc$DaysSinceMandateFactor <- as.factor(csxmpxc$DaysSinceMandate)
+relevel
+warpbreaks$tension <- relevel(warpbreaks$tension, ref = "M")
+csxmpxc$DaysSinceMandateFactor <- relevel(csxmpxc$DaysSinceMandateFactor, ref = "-1")
+csxmpxc$CountyFactor <- as.factor(csxmpxc$CountyFIPS)
+lout2 <- lm(DummyAllNPIs ~  CountyFIPS + cases + deaths + DaysSinceMandateFactor + CountyFactor, csxmpxc[csxmpxc$DaysSinceMandate<126 & csxmpxc$DaysSinceMandate>-51,])
+summary(lout2)
+lout2 <- as.data.frame(unclass(coeftest(lout2,vcov=vcovHC(lout2,type="HC0",cluster="CountyFIPS"))))
+lout2 <- lout2[1:179,]
+lout2$day <- as.numeric(c("NA", "NA", "NA", "NA", -50:-2, 0:125))
+lout2$ci <- 1.96*lout2$`Std. Error`
+pd <- position_dodge(0.1)
+ggplot(lout2[is.na(lout2$day)==FALSE,], aes(y=Estimate, x=day)) + 
+  geom_errorbar(aes(ymin=Estimate-ci, ymax=Estimate+ci), width=1, position=pd, colour = "blue") +
+  geom_point(size=1) + 
+  geom_vline(xintercept = -1) +
+  xlab("Days Since Mandate") +
+  ggtitle(c("Non-Mask Mandate NPIs and Consumer Spending: Event Study")) +
+  theme_classic()
+# Checking the time distribution of mask mandates
+subset <- csxmpxc[is.na(csxmpxc$EariliestPolicyDaysThisYear)==FALSE,]
+subset <- subset[!duplicated(subset[,c("CountyFIPS")]),]
+ggplot(subset[subset$EariliestPolicyDaysThisYear>0,], aes(x=EariliestPolicyDaysThisYear)) + 
+  stat_ecdf(geom = "step") + 
+  theme_classic() +
+  xlab("Days This Year") +
+  ylab("Density") +
+  ggtitle("Cumulative Density Fuction of \nMask Mandate Implementation")
+ggplot(subset[subset$EariliestPolicyDaysThisYear>0,], aes(x=EariliestPolicyDaysThisYear)) + 
+  geom_histogram(binwidth = 1) + 
+  theme_classic() +
+  xlab("Days This Year") +
+  ylab("Density") +
+  ggtitle("Time Distribution of \nMask Mandate Implementation")
 
+# Reopenings Don't Matter Visualization
+# Making Graphs
+ggplot(interventions, aes(x=DiffSAH_)) + 
+  geom_histogram(binwidth = 1) + 
+  theme_classic() +
+  xlab("Difference Between Stay at Home Order End and \nMask Mandate Implementation (Days)") +
+  ylab("Counties") +
+  ggtitle("Stay at Home Order End and \nMask Mandate Implementation")
+ggplot(interventions, aes(x=Diff500G_)) + 
+  geom_histogram(binwidth = 1) + 
+  theme_classic() +
+  ylab("Counties") +
+  xlab("Difference Between 500 Person Gathering Ban \nEnd and Mask Mandate Implementation (Days)") +
+  ggtitle("500 Person Gathering Ban End and \nMask Mandate Implementation")
+ggplot(interventions, aes(x=Diff50G_)) +
+  geom_histogram(binwidth = 1) + 
+  theme_classic() +
+  ylab("Counties") +
+  xlab("Difference Between 50 Person Gathering Ban \nEnd and Mask Mandate Implementation (Days)") +
+  ggtitle("50 Person Gathering Ban End and \nMask Mandate Implementation")
+ggplot(interventions, aes(x=DiffRest_)) + 
+  geom_histogram(binwidth = 1) + 
+  ylab("Counties") +
+  theme_classic() +
+  xlab("Difference Between Restaurant Reopening and \nMask Mandate Implementation (Days)") +
+  ggtitle("Restaurant Reopening and \nMask Mandate Implementation")
+ggplot(interventions, aes(x=DiffGym_)) + 
+  ylab("Counties") +
+  geom_histogram(binwidth = 1) + 
+  theme_classic() +
+  xlab("Difference Between Gym & Enterntainment \nReopening and Mask Mandate Implementation (Days)") +
+  ggtitle("Gym & Enterntainment Reopening \nand Mask Mandate Implementation")
